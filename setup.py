@@ -439,7 +439,7 @@ class SetupApp(tk.Tk):
                 row=i, column=0, columnspan=2, sticky=tk.W, pady=4)
 
         note = ttk.Label(frame,
-            text="Game install path is only used in premake5.lua for local debugging "
+            text="Game install path is saved in the git-ignored .env file for local debugging "
                  "(copy-on-build). It is NOT committed to the repository.",
             wraplength=480, foreground="gray")
         note.grid(row=len(entries) + len(checks) + 2, column=0, columnspan=2, sticky=tk.W, pady=(12, 0))
@@ -655,6 +655,8 @@ class SetupApp(tk.Tk):
         txt.insert(tk.END, f"  Substitute tokens in {len(TEMPLATE_FILES)} files\n")
         txt.insert(tk.END, f"  Inject submodule includes into premake5.lua\n")
         txt.insert(tk.END, f"  Write .gitmodules\n")
+        if cfg["game_path"]:
+            txt.insert(tk.END, "  Save GAME_DIR in the git-ignored .env file\n")
         if cfg["run_git_sm"] and cfg["submodules"]:
             txt.insert(tk.END, f"  Run `git submodule add` for {len(cfg['submodules'])} submodule(s)\n")
         if not cfg["enable_signing"]:
@@ -725,9 +727,9 @@ class SetupApp(tk.Tk):
                 emit("→ Stripping code signing calls…")
                 _strip_signing(SCRIPT_DIR, emit)
 
-            # 4. Handle game path in premake5.lua
+            # 4. Store the local game path in .env
             if cfg["game_path"]:
-                emit("→ Inserting game path into premake5.lua…")
+                emit("→ Saving game path in .env…")
                 _inject_game_path(SCRIPT_DIR / "premake5.lua", tokens["PROJECT_NAME"],
                                   cfg["game_path"], cfg["script_subdir"], emit)
 
@@ -1002,15 +1004,21 @@ def _strip_signing(root: Path, emit):
 
 
 def _inject_game_path(premake_lua: Path, project_name: str, game_path: str, script_subdir: str, emit):
-    """Uncomment and fill in the setpaths() call in premake5.lua."""
+    """Save the machine-specific path in .env and configure the plugin subdirectory."""
     if not premake_lua.exists():
         return
+    env_file = premake_lua.parent / ".env"
+    lines = env_file.read_text(encoding="utf-8").splitlines() if env_file.exists() else []
+    lines = [line for line in lines if not re.match(r"^\s*GAME_DIR\s*=", line)]
+    lines.append(f"GAME_DIR={game_path}")
+    env_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
     text = premake_lua.read_text(encoding="utf-8")
-    old = f"   -- setpaths(\"C:/Games/GameName/\", \"Game.exe\", \"plugins/\")"
-    new = f"   setpaths(\"{game_path}\", \"\", \"{script_subdir}\")"
-    text = text.replace(old, new)
+    old = '   setpaths("GAME_DIR", nil, "plugins/")'
+    subdir = json.dumps(script_subdir.replace("\\", "/") or "plugins/", ensure_ascii=False)
+    text = text.replace(old, f'   setpaths("GAME_DIR", nil, {subdir})')
     premake_lua.write_text(text, encoding="utf-8")
-    emit(f"  ✓ Game path set to: {game_path}")
+    emit("  Local game path saved as GAME_DIR in .env")
 
 
 def _self_delete(root: Path, emit, deferred: bool = True):

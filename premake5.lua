@@ -1,3 +1,50 @@
+-- The folder a project is deployed to, and the game it is started from when debugging,
+-- is the path of one machine and does not belong in the repository. It is read from a
+-- `.env` file next to this script, which is not tracked by git and holds one
+-- `<KEY>=<folder>` line per game (quotes and a trailing slash are optional). A project
+-- whose key is missing is not deployed at all.
+local envkeys = nil
+function envdir(key)
+   if not envkeys then
+      envkeys = {}
+      local text = io.readfile(path.join(_SCRIPT_DIR, ".env")) or ""
+      for line in text:gmatch("[^\r\n]+") do
+         local k, v = line:match("^%s*([%w_]+)%s*=%s*(.-)%s*$")
+         if k and v ~= "" then
+            v = v:gsub('^"', ""):gsub('"$', ""):gsub("^'", ""):gsub("'$", "")
+            envkeys[k] = v
+         end
+      end
+   end
+
+   local value = envkeys[key]
+   if not value then return nil end
+
+   value = value:gsub("[%s\\/]+$", "")
+   if value == "" then return nil end
+
+   return path.translate(value)
+end
+
+-- Deploys the built .asi into the script folder of the game that `key` names in the .env
+-- file, and starts the game from there when debugging. Only a plugin that is already
+-- installed in the game folder is replaced, a folder without one is left alone.
+function setpaths(key, exepath, scriptspath)
+   scriptspath = scriptspath or "scripts/"
+   local gamepath = envdir(key)
+   if gamepath then
+      local target = path.translate(path.join(gamepath, scriptspath)) .. "\\"
+      postbuildcommands {
+         "if exist \"" .. target .. "$(TargetFileName)\" copy /y \"$(TargetPath)\" \"" .. target .. "\"",
+      }
+      debugdir (gamepath)
+      if exepath and exepath ~= "" then
+         debugcommand (path.join(gamepath, exepath))
+         debugdir (path.join(gamepath, path.getdirectory(exepath)))
+      end
+   end
+end
+
 newoption {
     trigger     = "with-version",
     value       = "STRING",
@@ -54,32 +101,6 @@ workspace "{{PROJECT_NAME}}"
 
    filter {}
 
-   pbcommands = {
-      "setlocal EnableDelayedExpansion",
-      "set file=$(TargetPath)",
-      "FOR %%i IN (\"%file%\") DO (",
-      "set filename=%%~ni",
-      "set fileextension=%%~xi",
-      "set target=!path!!filename!!fileextension!",
-      "if exist \"!target!\" copy /y \"!file!\" \"!target!\"",
-      ")" }
-
-   function setpaths (gamepath, exepath, scriptspath)
-      scriptspath = scriptspath or "scripts/"
-      if (gamepath) then
-         cmdcopy = { "set \"path=" .. gamepath .. scriptspath .. "\"" }
-         table.insert(cmdcopy, pbcommands)
-         postbuildcommands (cmdcopy)
-         debugdir (gamepath)
-         if (exepath) then
-            debugcommand (gamepath .. exepath)
-            dir, file = exepath:match'(.*/)(.*)'
-            debugdir (gamepath .. (dir or ""))
-         end
-      end
-      targetdir ("bin/%{cfg.buildcfg}")
-   end
-
 project "{{PROJECT_NAME}}"
    kind "{{OUTPUT_KIND}}"
    language "C++"
@@ -110,5 +131,5 @@ project "{{PROJECT_NAME}}"
    -- ##BEGIN_EXTERNAL_SUBMODULES## (managed by setup.py - do not edit this line)
    -- ##END_EXTERNAL_SUBMODULES## (managed by setup.py - do not edit this line)
 
-   -- Set game install path here for local debugging (not committed):
-   -- setpaths("C:/Games/GameName/", "Game.exe", "plugins/")
+   -- Set GAME_DIR in .env for local deployment; supply the game executable to debug it.
+   setpaths("GAME_DIR", nil, "plugins/")
