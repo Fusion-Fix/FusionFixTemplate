@@ -65,29 +65,27 @@ jobs:
     - name: Configure build
       run: ./premake5 {{PREMAKE_VS_VERSION}} --with-version=${{ steps.versioning.outputs.version }}
 
+    # ##BEGIN_PLUGIN_SDK## (managed by setup.py)
     - name: Cache plugin-sdk build output
       id: cache-plugin-sdk
       uses: actions/cache@v6
       with:
-        path: external/plugin-sdk/output
-        key: plugin-sdk-${{ runner.os }}-${{ hashFiles('external/plugin-sdk/**/*.h', 'external/plugin-sdk/**/*.cpp', 'external/plugin-sdk/**/*.c', 'external/plugin-sdk/safetyhook/**') }}
+        path: '{{PLUGIN_SDK_PATH}}/output'
+        key: plugin-sdk-${{ runner.os }}-{{PLUGIN_SDK_TARGET}}-{{PLUGIN_SDK_PLATFORM}}-${{ hashFiles('premake5.lua', '{{PLUGIN_SDK_PATH}}/**/*.h', '{{PLUGIN_SDK_PATH}}/**/*.hpp', '{{PLUGIN_SDK_PATH}}/**/*.cpp', '{{PLUGIN_SDK_PATH}}/**/*.c') }}
 
     - name: Build plugin-sdk
-      if: steps.cache-plugin-sdk.outputs.cache-hit != 'true' && hashFiles('external/plugin-sdk/shared/plugin.h') != ''
+      if: steps.cache-plugin-sdk.outputs.cache-hit != 'true'
       shell: pwsh
       run: |
-        $slnx = "build/{{PROJECT_NAME}}.slnx"
-        $content = Get-Content $slnx -Raw
-        $sdkTargets = [regex]::Matches($content, '"(plugin_[a-zA-Z0-9_]+)"') |
-                      ForEach-Object { $_.Groups[1].Value } | Select-Object -Unique
-        foreach ($t in $sdkTargets) {
-          msbuild -m $slnx /target:$t /property:Configuration=Release /property:Platform={{MSBUILD_PLATFORM}}
-          msbuild -m $slnx /target:$t /property:Configuration=Debug   /property:Platform={{MSBUILD_PLATFORM}}
-        }
+        msbuild -m "build/{{PLUGIN_SDK_TARGET}}.vcxproj" /property:Configuration=Release /property:Platform={{PLUGIN_SDK_PLATFORM}}
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        msbuild -m "build/{{PLUGIN_SDK_TARGET}}.vcxproj" /property:Configuration=Debug /property:Platform={{PLUGIN_SDK_PLATFORM}}
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    # ##END_PLUGIN_SDK## (managed by setup.py)
 
     - name: Build
       run: |
-        msbuild -m build/{{PROJECT_NAME}}.slnx /property:Configuration=Release /property:Platform={{MSBUILD_PLATFORM}}
+        msbuild -m "build/{{PROJECT_NAME}}.{{SOLUTION_EXTENSION}}" /property:Configuration=Release /property:Platform={{MSBUILD_PLATFORM}}
 
     - name: Download Ultimate ASI Loader
       uses: robinraju/release-downloader@v1.13

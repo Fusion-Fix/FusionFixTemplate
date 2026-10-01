@@ -7,10 +7,11 @@ submodules, and optionally make an initial commit.
 
 After applying changes this script deletes itself.
 
-Requirements: Python 3.8+ (tkinter is included in the standard library)
+Requirements: Python 3.9+ with tkinter
 """
 
 import json
+import setup_emulators
 import re
 import shutil
 import subprocess
@@ -105,7 +106,6 @@ For more information, please refer to <https://unlicense.org>
 OUTPUT_PRESETS = {
     "SharedLib (.asi)": ("SharedLib", ".asi"),
     "SharedLib (.dll)": ("SharedLib", ".dll"),
-    "WindowedApp (.exe)": ("WindowedApp", ".exe"),
 }
 
 PREMAKE_VERSIONS = ["vs2026", "vs2022", "vs2019"]
@@ -134,7 +134,15 @@ SUBMODULE_PREMAKE = {
     "modupdater": [
         'includedirs {{ "{path}/dist" }}',
         'libdirs {{ "{path}/dist" }}',
-        # Release/Debug libs are linked in the filter blocks at the bottom
+        'filter {{ "configurations:Release", "architecture:x86" }}',
+        '   links {{ "libmodupdater_release_win32" }}',
+        'filter {{ "configurations:Release", "architecture:x86_64" }}',
+        '   links {{ "libmodupdater_release_x64" }}',
+        'filter {{ "configurations:Debug", "architecture:x86" }}',
+        '   links {{ "libmodupdater_debug_win32" }}',
+        'filter {{ "configurations:Debug", "architecture:x86_64" }}',
+        '   links {{ "libmodupdater_debug_x64" }}',
+        'filter {{}}',
     ],
     "spdlog": [
         'includedirs {{ "{path}/include" }}',
@@ -170,7 +178,7 @@ PLUGIN_SDK_GAMES = [
     ("GTA III",                        "plugin_III",        "game_III",        "GTA3",         ["PLUGIN_SGV_10EN", "RW"],                              "x32"),
     ("GTA Vice City",                  "plugin_vc",         "game_vc",         "GTAVC",         ["PLUGIN_SGV_10EN", "RW"],                              "x32"),
     ("GTA San Andreas",                "plugin_sa",         "game_sa",         "GTASA",         ["PLUGIN_SGV_10US", "RW"],                              "x32"),
-    ("GTA IV",                         "plugin_IV",         "game_IV",         "GTAIV",         ["PLUGIN_SGV_CE",   "RAGE"],                            "x64"),
+    ("GTA IV",                         "plugin_IV",         "game_IV",         "GTAIV",         ["PLUGIN_SGV_CE",   "RAGE"],                            "x32"),
     ("GTA III – Definitive Edition",   "plugin_iii_unreal", "game_iii_unreal", "GTA3_UNREAL",   ["PLUGIN_UNREAL", "UNREAL", "NOASM", "RWINT32FROMFLOAT", "_WIN64"], "x64"),
     ("GTA VC – Definitive Edition",    "plugin_vc_unreal",  "game_vc_unreal",  "GTAVC_UNREAL",  ["PLUGIN_UNREAL", "UNREAL", "NOASM", "RWINT32FROMFLOAT", "_WIN64"], "x64"),
     ("GTA SA – Definitive Edition",    "plugin_sa_unreal",  "game_sa_unreal",  "GTASA_UNREAL",  ["PLUGIN_UNREAL", "UNREAL", "NOASM", "RWINT32FROMFLOAT", "_WIN64"], "x64"),
@@ -273,6 +281,7 @@ class SetupApp(tk.Tk):
         self._tab_submodules()
         self._tab_build_ci()
         self._tab_extra()
+        self._tab_emulators()
 
         # Bottom bar
         bottom = ttk.Frame(self)
@@ -310,13 +319,15 @@ class SetupApp(tk.Tk):
         ttk.Combobox(frame, textvariable=self.var_branch,
                      values=["main", "master"], state="readonly").grid(row=3, column=1, sticky=tk.EW, pady=4)
 
-        ttk.Label(frame, text="Architecture").grid(row=4, column=0, sticky=tk.W, pady=4, padx=(0, 10))
-        ttk.Combobox(frame, textvariable=self.var_arch,
-                     values=list(ARCH_PRESETS.keys()), state="readonly").grid(row=4, column=1, sticky=tk.EW, pady=4)
+        ttk.Label(frame, text="Windows architecture").grid(row=4, column=0, sticky=tk.W, pady=4, padx=(0, 10))
+        self.arch_combo = ttk.Combobox(frame, textvariable=self.var_arch,
+                     values=list(ARCH_PRESETS.keys()), state="readonly")
+        self.arch_combo.grid(row=4, column=1, sticky=tk.EW, pady=4)
 
-        ttk.Label(frame, text="Output type").grid(row=5, column=0, sticky=tk.W, pady=4, padx=(0, 10))
-        ttk.Combobox(frame, textvariable=self.var_output,
-                     values=list(OUTPUT_PRESETS.keys()), state="readonly").grid(row=5, column=1, sticky=tk.EW, pady=4)
+        ttk.Label(frame, text="Windows output type").grid(row=5, column=0, sticky=tk.W, pady=4, padx=(0, 10))
+        self.output_combo = ttk.Combobox(frame, textvariable=self.var_output,
+                     values=list(OUTPUT_PRESETS.keys()), state="readonly")
+        self.output_combo.grid(row=5, column=1, sticky=tk.EW, pady=4)
 
         note = ttk.Label(frame,
             text="Tip: repository path is auto-derived from URL for CI release conditions.",
@@ -386,6 +397,34 @@ class SetupApp(tk.Tk):
         self._custom_sm_rows: list[dict] = []
         ttk.Button(outer, text="+ Add Custom Submodule", command=self._add_custom_sm_row).pack(anchor=tk.W, pady=(6, 0))
 
+    def _tab_emulators(self):
+        frame = ttk.Frame(self.notebook, padding=12)
+        self.notebook.add(frame, text=" Target ")
+        frame.columnconfigure(1, weight=1)
+        fields = [("target", "Platform", "windows", ["windows", "psp", "pcsx2"]),
+                  ("language", "Emulator source language", "C", ["C", "C++"]),
+                  ("game_module", "PSP internal game module", "", None),
+                  ("disc_ids", "PSP disc IDs (comma separated)", "", None),
+                  ("crcs", "PS2 game CRCs (comma separated)", "", None),
+                  ("base", "PS2 load address", "0x02100000", None)]
+        for row, (name, label, default, values) in enumerate(fields):
+            var = tk.StringVar(value=self._defaults.get(name, default))
+            setattr(self, "var_" + name, var)
+            ttk.Label(frame, text=label).grid(row=row, column=0, sticky=tk.W, padx=(0, 10), pady=5)
+            widget = ttk.Combobox(frame, textvariable=var, values=values, state="readonly") if values else ttk.Entry(frame, textvariable=var)
+            widget.grid(row=row, column=1, sticky=tk.EW, pady=5)
+        ttk.Label(frame, wraplength=500, text="PSP and PS2 setup downloads helper sources from GitHub and always registers/initializes pspsdk or ps2sdk as a Git submodule. Windows dependencies, architecture, output format, signing and EmbedPDB do not apply. The local game path is the emulator directory.").grid(row=6, column=0, columnspan=2, pady=12)
+        self.var_target.trace_add("write", lambda *_: self._target_changed())
+        self._target_changed()
+
+    def _target_changed(self):
+        native = self.var_target.get() == "windows"
+        self.notebook.tab(1, state="normal" if native else "disabled")
+        for widget in [self.arch_combo, self.output_combo]:
+            widget.configure(state="readonly" if native else "disabled")
+        for widget in [self.signing_check, self.embpdb_check]:
+            widget.configure(state="normal" if native else "disabled")
+
     def _add_custom_sm_row(self, path_val="", url_val=""):
         row_idx = len(self._custom_sm_rows)
         frame = self._custom_sm_frame
@@ -410,6 +449,8 @@ class SetupApp(tk.Tk):
 
         self.var_premake_version  = tk.StringVar()
         self.var_game_path        = tk.StringVar()
+        self.var_game_exe         = tk.StringVar()
+        self.var_steam_app_id     = tk.StringVar()
         self.var_script_subdir    = tk.StringVar(value="plugins/")
         self.var_run_git_sm       = tk.BooleanVar(value=True)
         self.var_run_commit       = tk.BooleanVar(value=True)
@@ -417,8 +458,10 @@ class SetupApp(tk.Tk):
 
         entries = [
             ("Premake VS target",          self.var_premake_version, "combobox"),
-            ("Game install path (local)",  self.var_game_path,       "entry"),
-            ("ASI output subdirectory",    self.var_script_subdir,   "entry"),
+            ("Game install path (local)", self.var_game_path, "entry"),
+            ("Game executable (relative)", self.var_game_exe, "entry"),
+            ("Steam App ID (Windows, optional)", self.var_steam_app_id, "entry"),
+            ("Windows plugin subdirectory", self.var_script_subdir, "entry"),
         ]
 
         for i, (label, var, kind) in enumerate(entries):
@@ -435,8 +478,10 @@ class SetupApp(tk.Tk):
             ("Enable code signing step in CI & release.bat",        self.var_enable_signing),
         ]
         for i, (label, var) in enumerate(checks, start=len(entries) + 1):
-            ttk.Checkbutton(frame, text=label, variable=var).grid(
-                row=i, column=0, columnspan=2, sticky=tk.W, pady=4)
+            check = ttk.Checkbutton(frame, text=label, variable=var)
+            check.grid(row=i, column=0, columnspan=2, sticky=tk.W, pady=4)
+            if var is self.var_enable_signing:
+                self.signing_check = check
 
         note = ttk.Label(frame,
             text="Game install path is saved in the git-ignored .env file for local debugging "
@@ -456,7 +501,8 @@ class SetupApp(tk.Tk):
         ttk.Label(frame, text="Include skeleton directories in the project:",
                   font=("", 10, "bold")).pack(anchor=tk.W, pady=(0, 8))
         ttk.Checkbutton(frame, text="textures/ folder", variable=self.var_has_textures).pack(anchor=tk.W)
-        ttk.Checkbutton(frame, text="tools/EmbedPDB/ (PDB embedding helper)", variable=self.var_has_embpdb).pack(anchor=tk.W)
+        self.embpdb_check = ttk.Checkbutton(frame, text="tools/EmbedPDB/ (PDB embedding helper)", variable=self.var_has_embpdb)
+        self.embpdb_check.pack(anchor=tk.W)
 
         ttk.Separator(frame, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=12)
         ttk.Label(frame, text="Additional paths to include in release.bat 7z command (one per line):",
@@ -478,6 +524,8 @@ class SetupApp(tk.Tk):
         self.var_run_git_sm.set(d.get("run_git_submodule_add", True))
         self.var_run_commit.set(d.get("run_initial_commit", True))
         self.var_enable_signing.set(d.get("enable_code_signing", False))
+        self.var_game_exe.set(d.get("game_executable", ""))
+        self.var_steam_app_id.set(d.get("steam_app_id", ""))
 
         license_spdx = d.get("license_spdx", "MIT")
         self.var_license.set(license_spdx if license_spdx in LICENSE_TEXTS else "MIT")
@@ -549,11 +597,14 @@ class SetupApp(tk.Tk):
             "OUTPUT_KIND":     output_kind,
             "TARGET_EXTENSION": target_extension,
             "PREMAKE_VS_VERSION": premake_ver,
+            "SOLUTION_EXTENSION": "slnx" if premake_ver == "vs2026" else "sln",
             "UAL_TAG":         ual_tag,
             "UAL_FILENAME":    ual_filename,
         }
 
-        return {
+        cfg = {
+            "game_exe": self.var_game_exe.get().strip(),
+            "steam_app_id": self.var_steam_app_id.get().strip(),
             "tokens": tokens,
             "submodules": submodules,
             "plugin_sdk_game": self.var_plugin_sdk_game.get(),
@@ -567,6 +618,10 @@ class SetupApp(tk.Tk):
             "extra_paths": self.extra_paths_text.get("1.0", tk.END).strip(),
         }
 
+        return setup_emulators.configure(cfg, self.var_target.get(), self.var_language.get(),
+            self.var_game_module.get().strip(), self.var_disc_ids.get().strip(),
+            self.var_crcs.get().strip(), self.var_base.get().strip())
+
     def _validate(self, cfg: dict) -> list[str]:
         errors = []
         t = cfg["tokens"]
@@ -576,6 +631,26 @@ class SetupApp(tk.Tk):
             errors.append("Please set a real GitHub repository URL.")
         if not t["GITHUB_REPO_PATH"] or "/" not in t["GITHUB_REPO_PATH"]:
             errors.append("Repository URL must be in https://github.com/<owner>/<repo> format.")
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", t["PROJECT_NAME"]):
+            errors.append("Project name must use letters, digits, dots, underscores or hyphens.")
+        selected = {sm["name"] for sm in cfg["submodules"]}
+        missing = DEFAULT_ENABLED - selected if cfg["target"] == "windows" else set()
+        if missing:
+            errors.append("Windows starter requires: " + ", ".join(sorted(missing)))
+        if "plugin-sdk" in selected:
+            sdk = next(g for g in PLUGIN_SDK_GAMES if g[0] == cfg["plugin_sdk_game"])
+            expected = "x64" if sdk[5] == "x64" else "x86"
+            if t["ARCHITECTURE"] != expected:
+                errors.append(f"Selected plugin-sdk game requires {expected} architecture.")
+        if cfg.get("steam_app_id") and not cfg["steam_app_id"].isdigit():
+            errors.append("Steam App ID must contain digits only.")
+        subdir = cfg["script_subdir"].replace("\\", "/")
+        if subdir and (not re.fullmatch(r"[A-Za-z0-9_ ./-]+", subdir) or ".." in subdir.split("/") or subdir.startswith("/")):
+            errors.append("Plugin subdirectory must be a relative folder within the game directory.")
+        exe = cfg.get("game_exe", "")
+        if any(c in exe for c in '\"\r\n'):
+            errors.append("Executable path cannot contain quotes or newlines.")
+        errors.extend(setup_emulators.validate(cfg))
         return errors
 
     # ------------------------------------------------------------------
@@ -639,7 +714,7 @@ class SetupApp(tk.Tk):
                     txt.insert(tk.END, f'    libdirs {{ "{path}/output/lib" }}\n')
                     txt.insert(tk.END, f'    links {{ "{lib_name}" }} (Release) / "{lib_name}_d" (Debug)\n')
                     txt.insert(tk.END, f'    [sub-project] build plugin-sdk as StaticLib\n')
-            else:
+            elif cfg["target"] == "windows":
                 snippets = SUBMODULE_PREMAKE.get(name)
                 if snippets:
                     txt.insert(tk.END, f"  -- {name}\n")
@@ -653,10 +728,16 @@ class SetupApp(tk.Tk):
 
         txt.insert(tk.END, "\n=== Actions ===\n")
         txt.insert(tk.END, f"  Substitute tokens in {len(TEMPLATE_FILES)} files\n")
-        txt.insert(tk.END, f"  Inject submodule includes into premake5.lua\n")
+        if cfg["target"] == "windows":
+            txt.insert(tk.END, "  Configure native dependencies, debugger and CI plugin-sdk steps\n")
+        else:
+            txt.insert(tk.END, f"  Generate {cfg['target']} {cfg['language']} starter and build scripts\n")
+            txt.insert(tk.END, f"  Download helpers from {setup_emulators.BASE_URL}\n")
+            for source in setup_emulators.manifest(cfg["target"]).values():
+                txt.insert(tk.END, f"    {source}\n")
         txt.insert(tk.END, f"  Write .gitmodules\n")
         if cfg["game_path"]:
-            txt.insert(tk.END, "  Save GAME_DIR in the git-ignored .env file\n")
+            txt.insert(tk.END, f"  Save {t.get('EMULATOR_ENV_KEY', 'GAME_DIR')} in the git-ignored .env file\n")
         if cfg["run_git_sm"] and cfg["submodules"]:
             txt.insert(tk.END, f"  Run `git submodule add` for {len(cfg['submodules'])} submodule(s)\n")
         if not cfg["enable_signing"]:
@@ -704,7 +785,11 @@ class SetupApp(tk.Tk):
         tokens = cfg["tokens"]
 
         try:
-            # 1. Token substitution
+            downloads = None
+            if cfg["target"] != "windows":
+                downloads = setup_emulators.fetch(cfg["target"], emit)
+                setup_emulators.initialize_sdk(SCRIPT_DIR, cfg, run_git, emit)
+            # 1. Substitute template tokens.
             emit("→ Substituting tokens in template files…")
             for rel in TEMPLATE_FILES:
                 p = SCRIPT_DIR / rel
@@ -718,9 +803,15 @@ class SetupApp(tk.Tk):
             _write_license_file(SCRIPT_DIR / "license", tokens["LICENSE_SPDX"], emit)
 
             # 2. Inject submodule premake lines
-            emit("→ Injecting submodule paths into premake5.lua…")
-            _inject_premake_submodules(SCRIPT_DIR / "premake5.lua", cfg["submodules"],
-                                       cfg.get("plugin_sdk_game", ""), emit)
+            if cfg["target"] == "windows":
+                configure_windows(SCRIPT_DIR, cfg)
+                _inject_premake_submodules(SCRIPT_DIR / "premake5.lua", cfg["submodules"],
+                                          cfg.get("plugin_sdk_game", ""), emit)
+            else:
+                setup_emulators.generate(SCRIPT_DIR, cfg, downloads)
+            _configure_ci_submodules(SCRIPT_DIR / ".github/workflows/msvc.yml",
+                                 cfg["submodules"], cfg.get("plugin_sdk_game", ""), emit)
+
 
             # 3. Handle code signing toggle
             if not cfg["enable_signing"]:
@@ -731,7 +822,8 @@ class SetupApp(tk.Tk):
             if cfg["game_path"]:
                 emit("→ Saving game path in .env…")
                 _inject_game_path(SCRIPT_DIR / "premake5.lua", tokens["PROJECT_NAME"],
-                                  cfg["game_path"], cfg["script_subdir"], emit)
+                                  cfg["game_path"], cfg["script_subdir"], emit,
+                                  env_key=tokens.get("EMULATOR_ENV_KEY", "GAME_DIR"))
 
             # 5. Handle extra packaging paths in release.bat
             if cfg["extra_paths"]:
@@ -762,7 +854,7 @@ class SetupApp(tk.Tk):
             emit("  ✓ .gitmodules written")
 
             # 8. git submodule add
-            if cfg["run_git_sm"] and cfg["submodules"]:
+            if cfg["target"] == "windows" and cfg["run_git_sm"] and cfg["submodules"]:
                 emit("→ Running git submodule add…")
                 for sm in cfg["submodules"]:
                     ok, out = run_git(["submodule", "add", sm["url"], sm["path"]], SCRIPT_DIR)
@@ -821,18 +913,18 @@ def _inject_release_extra_paths(release_bat: Path, raw_paths: str, emit):
         return
 
     text = release_bat.read_text(encoding="utf-8")
-    anchor = '{{PROJECT_NAME}}.zip" ".\\data\\*" ^'
-    idx = text.find(anchor)
-    if idx == -1:
-        emit("  ⚠ Could not find 7z anchor in release.bat, skipping extra release paths")
+    # Match after token substitution, for native and emulator release scripts alike.
+    match = re.search(r'^7z a [^\n]+', text, re.MULTILINE)
+    if match is None:
+        emit("  Could not find 7z command, skipping extra release paths")
         return
-
-    insert_at = text.find("\n", idx)
-    if insert_at == -1:
-        insert_at = len(text)
-
-    injected_lines = "".join(f'\n"{p}" ^' for p in extra_paths)
-    text = text[:insert_at] + injected_lines + text[insert_at:]
+    additions = " ".join(f'"{p}"' for p in extra_paths)
+    command = match.group(0)
+    if command.endswith("^"):
+        command = command[:-1] + additions + " ^"
+    else:
+        command += " " + additions
+    text = text[:match.start()] + command + text[match.end():]
     release_bat.write_text(text, encoding="utf-8")
     emit(f"  ✓ Added {len(extra_paths)} extra path(s) to release.bat")
 
@@ -978,13 +1070,61 @@ def _inject_premake_submodules(premake_lua: Path, submodules: list, plugin_sdk_g
     if sdk_project_lines:
         emit(f"  ✓ Added plugin-sdk StaticLib sub-project")
 
+def _configure_ci_submodules(workflow: Path, submodules: list, plugin_sdk_game: str, emit):
+    """Keep SDK CI steps only for a selected SDK, using its path and game target."""
+    if not workflow.exists():
+        return
+    text = workflow.read_text(encoding="utf-8")
+    block = re.search(
+        r"^    # ##BEGIN_PLUGIN_SDK##[^\n]*\n(.*?)"
+        r"^    # ##END_PLUGIN_SDK##[^\n]*(?:\n|$)", text, re.MULTILINE | re.DOTALL,
+    )
+    if block is None:
+        emit("  ⚠ Plugin-sdk CI markers not found, skipping")
+        return
+    sdk = next((sm for sm in submodules if sm.get("name") == "plugin-sdk"), None)
+    replacement = ""
+    if sdk:
+        game = next((g for g in PLUGIN_SDK_GAMES if g[0] == plugin_sdk_game), PLUGIN_SDK_GAMES[0])
+        replacement = block.group(1)
+        values = {
+            "PLUGIN_SDK_PATH": sdk["path"].replace("\\", "/").rstrip("/").replace("'", "''"),
+            "PLUGIN_SDK_TARGET": game[1],
+            "PLUGIN_SDK_PLATFORM": "x64" if game[5] == "x64" else "Win32",
+        }
+        for key, value in values.items():
+            replacement = replacement.replace("{{" + key + "}}", value)
+    workflow.write_text(text[:block.start()] + replacement + text[block.end():], encoding="utf-8")
+    emit("  ✓ Configured plugin-sdk CI steps" if sdk else "  ✓ Removed plugin-sdk CI steps")
+
+
+def configure_windows(root: Path, cfg):
+    """Apply debugger and packaging choices even without a local install path."""
+    exe = json.dumps(cfg.get("game_exe", "").replace("\\", "/"), ensure_ascii=False)
+    subdir = cfg.get("script_subdir", "").replace("\\", "/").strip("/") or "plugins"
+    lua = root / "premake5.lua"
+    text = lua.read_text(encoding="utf-8")
+    text = text.replace('setpaths("GAME_DIR", nil, "plugins/")', f'setpaths("GAME_DIR", {exe}, {json.dumps(subdir)})')
+    steam = cfg.get("steam_app_id", "")
+    if steam:
+        text += f'\n   debugenvs {{ "SteamAppId={steam}", "SteamGameId={steam}" }}\n'
+    lua.write_text(text, encoding="utf-8")
+    release = root / "release.bat"
+    text = release.read_text(encoding="utf-8")
+    if not cfg.get("has_embpdb", True):
+        text = re.sub(r"^.*EmbedPDB.*\n(?:if errorlevel 1 exit /b %errorlevel%\n)?", "", text, flags=re.M)
+    text = text.replace("data\\plugins\\", "data\\" + subdir.replace("/", "\\") + "\\")
+    release.write_text(text, encoding="utf-8")
+    (root / "data" / subdir).mkdir(parents=True, exist_ok=True)
+
+
 def _strip_signing(root: Path, emit):
     """Remove code-signing lines from release.bat and the CI workflow."""
     release_bat = root / "release.bat"
     if release_bat.exists():
-        lines = release_bat.read_text(encoding="utf-8").splitlines()
-        lines = [l for l in lines if "sign.ps1" not in l.lower()]
-        release_bat.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        text = release_bat.read_text(encoding="utf-8")
+        text = re.sub(r"^.*sign\.ps1.*\n(?:if errorlevel 1 exit /b %errorlevel%\n)?", "", text, flags=re.M | re.I)
+        release_bat.write_text(text, encoding="utf-8")
         emit("  ✓ Removed sign.ps1 call from release.bat")
 
     workflow = root / ".github" / "workflows" / "msvc.yml"
@@ -1003,14 +1143,14 @@ def _strip_signing(root: Path, emit):
         emit("  ✓ Removed signing env vars from CI workflow")
 
 
-def _inject_game_path(premake_lua: Path, project_name: str, game_path: str, script_subdir: str, emit):
+def _inject_game_path(premake_lua: Path, project_name: str, game_path: str, script_subdir: str, emit, env_key="GAME_DIR"):
     """Save the machine-specific path in .env and configure the plugin subdirectory."""
     if not premake_lua.exists():
         return
     env_file = premake_lua.parent / ".env"
     lines = env_file.read_text(encoding="utf-8").splitlines() if env_file.exists() else []
-    lines = [line for line in lines if not re.match(r"^\s*GAME_DIR\s*=", line)]
-    lines.append(f"GAME_DIR={game_path}")
+    lines = [line for line in lines if not re.match(r"^\s*" + re.escape(env_key) + r"\s*=", line)]
+    lines.append(f"{env_key}={game_path}")
     env_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     text = premake_lua.read_text(encoding="utf-8")
@@ -1018,12 +1158,21 @@ def _inject_game_path(premake_lua: Path, project_name: str, game_path: str, scri
     subdir = json.dumps(script_subdir.replace("\\", "/") or "plugins/", ensure_ascii=False)
     text = text.replace(old, f'   setpaths("GAME_DIR", nil, {subdir})')
     premake_lua.write_text(text, encoding="utf-8")
-    emit("  Local game path saved as GAME_DIR in .env")
+    emit(f"  Local install path saved as {env_key} in .env")
 
 
 def _self_delete(root: Path, emit, deferred: bool = True):
     setup_py = root / "setup.py"
     template_json = root / "template.json"
+    # Only remove template-owned resources within this project.
+    for rel in ["setup_emulators.py"]:
+        target = (root / rel).resolve()
+        if root.resolve() not in target.parents:
+            raise ValueError("Template cleanup path escaped the project")
+        if target.is_dir():
+            shutil.rmtree(target)
+        elif target.exists():
+            target.unlink()
 
     if setup_py.exists():
         try:

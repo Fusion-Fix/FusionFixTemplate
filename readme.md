@@ -20,7 +20,7 @@ cd {{PROJECT_NAME}}
 premake5.bat
 ```
 
-Open `build/{{PROJECT_NAME}}.slnx` in Visual Studio and build.
+Open `build/{{PROJECT_NAME}}.{{SOLUTION_EXTENSION}}` in Visual Studio and build.
 
 For local deployment, create a `.env` file next to `premake5.lua` (the setup wizard
 also creates it when you supply a game install path):
@@ -41,7 +41,12 @@ in `premake5.lua`, then regenerate the solution:
 setpaths("GAME_DIR", "Game.exe", "plugins/")
 ```
 
+The setup GUI can also set the relative game executable, plugin subdirectory and
+optional Steam App ID. Deployment and packaging use the selected subdirectory.
 
+The setup GUI also creates PSP and PCSX2F plugins in C or C++, downloading helper
+files from GitHub and adding the SDK as a submodule. See the
+[emulator setup notes](contributing.md#psp--pcsx2f-setup).
 ## Contributing
 
 Pull requests are welcome. Please open an issue first to discuss what you would like to change.

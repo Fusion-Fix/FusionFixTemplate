@@ -218,3 +218,11 @@ node_modules/
 # Output artifact
 {{PROJECT_NAME}}.zip
 data/plugins/{{PROJECT_NAME}}{{TARGET_EXTENSION}}
+data/**/*.asi
+data/**/*.dll
+data/**/*.prx
+data/**/*.elf
+data/**/*.map
+*.o
+*.d
+source/exports.c

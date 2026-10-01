@@ -60,5 +60,13 @@
   "run_git_submodule_add": true,
   "run_initial_commit": true,
   "enable_code_signing": false,
-  "plugin_sdk_game": "GTA III"
+  "plugin_sdk_game": "GTA III",
+  "game_executable": "",
+  "steam_app_id": "",
+  "target": "windows",
+  "language": "C",
+  "game_module": "",
+  "disc_ids": "",
+  "crcs": "",
+  "base": "0x02100000"
 }

@@ -55,6 +55,7 @@ workspace "{{PROJECT_NAME}}"
    configurations { "Release", "Debug" }
    architecture "{{ARCHITECTURE}}"
    location "build"
+   objdir "build/obj/%{prj.name}/%{cfg.buildcfg}"
    cppdialect "C++latest"
    targetdir "bin/%{cfg.buildcfg}"
    buildoptions { "/dxifcInlineFunctions- /Zc:__cplusplus /utf-8" }
@@ -127,6 +128,7 @@ project "{{PROJECT_NAME}}"
    includedirs { "source/includes" }
    files { "source/**.h", "source/**.hpp", "source/**.cpp", "source/**.hxx", "source/**.ixx" }
    files { "source/resources/Versioninfo.rc" }
+   files { "data/**.ini" }
 
    -- ##BEGIN_EXTERNAL_SUBMODULES## (managed by setup.py - do not edit this line)
    -- ##END_EXTERNAL_SUBMODULES## (managed by setup.py - do not edit this line)
