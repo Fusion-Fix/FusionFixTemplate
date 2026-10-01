@@ -28,7 +28,7 @@ Suggested filename format:
 
 ## PSP / PCSX2F setup
 
-Run `python setup.py` and select `psp` or `pcsx2` in the Target tab, then choose C
+Run `python setup.py` and choose **PSP · .prx** or **PCSX2F · .elf** at the top, then choose C
 or C++. Supply the PSP internal game module and disc IDs, or PS2 game CRCs and
 load address. The local game path is the emulator directory, stored in `.env`
 as `PPSSPP_DIR` or `PCSX2F_DIR`.
@@ -55,3 +55,6 @@ heap and global constructors. PS2 enters `init` directly; add explicit heap and
 constructor initialization before heap-based STL or nontrivial global objects.
 The starter disables exceptions and RTTI. Both languages produce guest MIPS
 plugins, not host emulator graphics/input plugins.
+
+Setup removes redundant `.gitkeep` files from populated project folders, while preserving
+placeholders for empty folders and leaving submodule contents untouched.

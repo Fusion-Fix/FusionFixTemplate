@@ -55,3 +55,12 @@ See [contributing.md](contributing.md) for workflow and reverse-engineering note
 ## License
 
 [{{LICENSE_SPDX}}](license)
+
+Run `python setup.py` to open the local setup wizard in your browser (Python 3.9+,
+no extra packages). Choose Windows ASI, PSP PRX or PCSX2F ELF first, then name the
+project. The repository URL follows the name until edited manually. Review the
+settings before initializing; use **Done** or **Exit setup** to close the local server.
+
+License choices cover all 13 templates returned by GitHub’s repository license picker,
+plus GPL-3.0-or-later. The complete texts are bundled with setup for offline use.
+Source: [GitHub licenses API](https://docs.github.com/en/rest/licenses/licenses#get-all-commonly-used-licenses).
