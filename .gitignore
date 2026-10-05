@@ -226,3 +226,5 @@ data/**/*.map
 *.o
 *.d
 source/exports.c
+*.elf.objects/
+*.prx.objects/

@@ -15,9 +15,8 @@ if (-not (Test-Path -LiteralPath $wrapper)) {
 }
 $outputDir = Join-Path $root 'data/{{PLUGIN_SUBDIR}}'
 New-Item -ItemType Directory -Force -Path $outputDir | Out-Null
-$makeArgs = @('-C', (Join-Path $root 'source'))
-if ($Clean) { $makeArgs += 'clean' }
-# Run in a child PowerShell: the SDK wrapper calls exit with make's result.
+$makeArgs = @('-Project', (Join-Path $root 'source/module.json'))
+if ($Clean) { $makeArgs += '-Clean' }
 & powershell -NoProfile -ExecutionPolicy Bypass -File $wrapper @makeArgs
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 if ($Clean) { exit 0 }
@@ -52,7 +51,7 @@ project "{{PROJECT_NAME}}"
    cppdialect "C++17"
    targetdir "data/{{PLUGIN_SUBDIR}}"
    targetextension "{{TARGET_EXTENSION}}"
-   files { "source/**.c", "source/**.cpp", "source/**.h", "source/**.hpp", "source/makefile", "source/linkfile", "source/exports.exp", "data/**.ini" }
+   files { "source/**.c", "source/**.cpp", "source/**.h", "source/**.hpp", "source/makefile", "source/module.json", "source/exports.exp", "data/**.ini" }
    includedirs { "source/includes" }
    local command = 'powershell -NoProfile -ExecutionPolicy Bypass -File "' .. path.getabsolute("build-plugin.ps1") .. '"'
    buildcommands { command }
@@ -78,10 +77,11 @@ A {{TARGET_PROFILE}} guest plugin. Implement the game-specific patches in `sourc
 On Windows, initialize the toolchain submodule with `git submodule update --init --recursive`,
 then run `powershell -NoProfile -ExecutionPolicy Bypass -File build-plugin.ps1`.
 The SDK submodule contains the Windows MIPS toolchain used by WidescreenFixesPack.
-Keep the checkout path free of spaces: the upstream SDK makefiles use unquoted paths.
+Both SDK module builders read `source/module.json`, support paths containing spaces,
+and keep intermediate files separate. Update the manifest when adding source files.
 
 Alternatively, run `premake5.bat` and open `build/{{PROJECT_NAME}}.{{SOLUTION_EXTENSION}}`.
-Visual Studio invokes the same makefile build. Its Win32 platform is the build host,
+Visual Studio invokes the same SDK build. Its Win32 platform is the build host,
 not the architecture of the plugin. Release and Debug currently use the same SDK flags
 and output. Use `build-plugin.ps1 -Clean` before changing flags.
 
@@ -99,8 +99,9 @@ against your game build. Real PSP hardware is not supported by this starter.
 
 For PS2, use PCSX2F or PCSX2 with the compatible **PCSX2 Plugin Injector** installed.
 The ELF is a guest EE plugin, not a desktop PCSX2 graphics/input plugin. Verify the
-game CRCs and reserve the configured load address in the injector's extended memory.
-Different plugins must not occupy overlapping memory. The starter performs no patches.
+game CRCs and enable 128 MB RAM. The injector assigns the ELF a dynamic base,
+private stack and heap. The SDK module runtime runs global C++ constructors before
+calling `init`; exceptions and RTTI are disabled. The starter performs no patches.
 
 To replace an already installed binary after a build, create a git-ignored `.env`:
 
@@ -130,7 +131,7 @@ setlocal
 cd /d "%~dp0"
 if not exist "data\{{PLUGIN_SUBDIR}}\{{PROJECT_NAME}}{{TARGET_EXTENSION}}" exit /b 1
 if exist "{{PROJECT_NAME}}.zip" del "{{PROJECT_NAME}}.zip"
-7z a "{{PROJECT_NAME}}.zip" ".\data\*" ".\licenses\*" {{PACKAGE_EXCLUDES}} -xr!*.map -xr!*.o -xr!*.elf~ -xr!*.gitkeep
+7z a "{{PROJECT_NAME}}.zip" ".\data\*" ".\licenses\*" {{PACKAGE_EXCLUDES}} -xr!*.objects -xr!*.map -xr!*.o -xr!*.elf~ -xr!*.gitkeep
 exit /b %errorlevel%
 """,
     'psp/source/main.c': r"""#include <pspsdk.h>
@@ -202,29 +203,11 @@ int module_start(SceSize args, void* argp)
 }
 #endif
 """,
-    'psp/source/makefile': r"""TARGET = ../data/{{PLUGIN_SUBDIR}}/{{PROJECT_NAME}}
-# C helpers stay C; C++ files use the SDK's separate CXX compilation rule.
-SOURCES = $(filter-out exports.c,$(wildcard *.c *.cpp includes/*.c includes/*.cpp))
-OBJS = $(addsuffix .o,$(basename $(SOURCES)))
-ifeq ({{PSP_BUILD_RULES}},build_prx.mak)
-OBJS += exports.o
-endif
-CFLAGS = -O2 -Os -G0 -Wall -MMD -MP -fno-strict-aliasing -fshort-wchar -fno-pic -mno-check-zero-division -mpreferred-stack-boundary=4 -fpack-struct=16
-CXXFLAGS = $(CFLAGS) -std=gnu++17 -fno-exceptions -fno-rtti
-ASFLAGS = $(CFLAGS)
-BUILD_PRX = 1
-PRX_EXPORTS = exports.exp
-LIBS = -lpspsystemctrl_user -lm
-ifneq ($(filter %.cpp,$(SOURCES)),)
-LIBS := -lstdc++ $(LIBS)
-endif
-PSPSDK = $(shell psp-config --pspsdk-path)
-include $(PSPSDK)/lib/{{PSP_BUILD_RULES}}
--include $(OBJS:.o=.d)
-.PHONY: clean-deps
-clean: clean-deps
-clean-deps:
-	rm -f $(OBJS:.o=.d)
+    'psp/source/makefile': r""".PHONY: all clean
+all:
+	powershell -NoProfile -ExecutionPolicy Bypass -File "../external/pspsdk/plugins/build-module.ps1" -Project module.json
+clean:
+	powershell -NoProfile -ExecutionPolicy Bypass -File "../external/pspsdk/plugins/build-module.ps1" -Project module.json -Clean
 """,
     'psp/source/exports.exp': r"""PSP_BEGIN_EXPORTS
 PSP_EXPORT_START(syslib, 0, 0x8000)
@@ -275,26 +258,11 @@ void init(void)
 
 int main(void) { return 0; }
 """,
-    'pcsx2/source/makefile': r"""EE_BIN = ../data/{{PLUGIN_SUBDIR}}/{{PROJECT_NAME}}.elf
-SOURCES = $(wildcard *.c *.cpp includes/*.c includes/*.cpp)
-EE_OBJS = $(addsuffix .o,$(basename $(SOURCES)))
-EE_CFLAGS = -Os -G0 -Wall -MMD -MP -fno-strict-aliasing -fshort-wchar -fno-pic -mno-check-zero-division -fpack-struct=16
-EE_CXXFLAGS = $(EE_CFLAGS) -std=gnu++17 -fno-exceptions -fno-rtti
-BASE_ADDRESS = {{PS2_BASE_ADDRESS}}
-EE_LINKFILE = linkfile
-ifneq ($(filter %.cpp,$(SOURCES)),)
-EE_LIBS += -l:libstdc++.a
-endif
-EE_LIBS += -l:libc.a -l:libm.a -l:libgcc.a
-EE_LDFLAGS = -Wl,--entry=init -Wl,-Map,$(EE_BIN).map -Wl,-exclude-libs,ALL -Wl,'--defsym=BASE_ADDRESS=$(BASE_ADDRESS)'
-.PHONY: all clean
-all: $(EE_BIN)
+    'pcsx2/source/makefile': r""".PHONY: all clean
+all:
+	powershell -NoProfile -ExecutionPolicy Bypass -File "../external/ps2sdk/plugins/build-module.ps1" -Project module.json
 clean:
-	rm -f $(EE_OBJS) $(EE_OBJS:.o=.d) $(EE_BIN) $(EE_BIN).map
-PS2SDK = ../external/ps2sdk/ps2sdk
-include $(PS2SDK)/samples/Makefile.pref
-include $(PS2SDK)/samples/Makefile.eeglobal
--include $(EE_OBJS:.o=.d)
+	powershell -NoProfile -ExecutionPolicy Bypass -File "../external/ps2sdk/plugins/build-module.ps1" -Project module.json -Clean
 """,
     'pcsx2/source/includes/plugin_api.h': r"""#pragma once
 // Preserve the loader ABI and link C++ plugin code to the C helpers.
@@ -329,12 +297,11 @@ def configure(cfg, target, language, game_module, disc_ids, crcs, base):
         TARGET_PROFILE='PPSSPP' if psp else 'PCSX2F',
         PLUGIN_SUBDIR='memstick/PSP/PLUGINS/' + name if psp else 'PLUGINS',
         EMULATOR_ENV_KEY='PPSSPP_DIR' if psp else 'PCSX2F_DIR',
-        EMULATOR_EXE=cfg['game_exe'] or ('PPSSPPWindows64.exe' if psp else 'pcsx2-qtx64-clang.exe'),
-        SDK_WRAPPER='external/pspsdk/vsmake.ps1' if psp else 'external/ps2sdk/ee/bin/vsmake.ps1',
+        EMULATOR_EXE=cfg['game_exe'] or ('PPSSPPWindows64.exe' if psp else 'pcsx2-qtx64.exe'),
+        SDK_WRAPPER='external/' + sdk + '/plugins/build-module.ps1',
         PSP_MODULE_NAME=name[:27], PSP_GAME_MODULE=game_module,
-        PSP_BUILD_RULES='build.mak' if language == 'C++' else 'build_prx.mak',
         PS2_CRCS=', '.join('(int)0x' + crc.removeprefix('0x') for crc in re.split(r'[,\s]+', crcs.strip()) if crc),
-        PS2_BASE_ADDRESS=base, PACKAGE_EXCLUDES='-xr!*.elf' if psp else '')
+        PACKAGE_EXCLUDES='-xr!*.elf' if psp else '')
     return cfg
 
 
@@ -350,12 +317,6 @@ def validate(cfg):
         crcs = re.split(r'[,\s]+', cfg['crcs'].strip())
         if not crcs or any(not re.fullmatch(r'(?:0x)?[A-Fa-f0-9]{8}', value) or int(value, 16) == 0 for value in crcs):
             errors.append('Enter nonzero eight-digit PS2 game CRCs, separated by commas.')
-        try:
-            address = int(cfg['base'], 16)
-            if not re.fullmatch(r'0x[0-9A-Fa-f]{8}', cfg['base']) or not 0x02000000 <= address < 0x10000000 or address % 128:
-                raise ValueError()
-        except ValueError:
-            errors.append('PS2 load address must be 128-byte aligned within extended memory (0x02000000–0x0FFFFFFF).')
     return errors
 
 
@@ -405,11 +366,7 @@ def generate(root, cfg, downloads):
     target = cfg['target']
     files = dict(downloads)
     if target == 'pcsx2':
-        linkfile = (root / 'external/ps2sdk/ps2sdk/ee/startup/linkfile').read_text(encoding='utf-8')
-        if '.text 0x00100000:' not in linkfile:
-            raise ValueError('Unexpected PS2SDK linker script layout')
         files['licenses/PS2SDK.txt'] = (root / 'external/ps2sdk/ps2sdk/LICENSE').read_text(encoding='utf-8')
-        files['source/linkfile'] = linkfile.replace('.text 0x00100000:', '.text BASE_ADDRESS :')
     for key, text in TEMPLATES.items():
         platform, rel = key.split('/', 1)
         if platform not in ('emulator', target):
@@ -419,8 +376,15 @@ def generate(root, cfg, downloads):
         files[rel] = text
     readme = files['readme.md'].replace('source/main.c', 'source/main.cpp' if cfg['language'] == 'C++' else 'source/main.c')
     readme += '\nHelpers downloaded by setup from WidescreenFixesPack revision `' + REVISION + '`.\n'
-    if target == 'pcsx2' and cfg['language'] == 'C++':
-        readme += '\nThe direct `init` entry does not initialize a C++ heap or run global constructors. Add explicit runtime initialization before using heap-based STL or nontrivial global objects; exceptions and RTTI are disabled.\n'
+    import json
+    sources = sorted(rel.removeprefix('source/') for rel in files if rel.startswith('source/') and rel.endswith(('.c', '.cpp')))
+    module = dict(sources=sources, output='../data/' + tokens['PLUGIN_SUBDIR'] + '/' + tokens['PROJECT_NAME'] + tokens['TARGET_EXTENSION'])
+    if target == 'psp':
+        module.update(exports='exports.exp', startup='crt' if cfg['language'] == 'C++' else 'module_start',
+                      libraries=['-lpspsystemctrl_user', '-lm'],
+                      c_flags=['-O2', '-Os', '-G0', '-Wall', '-fno-strict-aliasing', '-fshort-wchar', '-fno-pic', '-mno-check-zero-division', '-mpreferred-stack-boundary=4', '-fpack-struct=16'],
+                      cxx_flags=['-std=gnu++17', '-fno-exceptions', '-fno-rtti'])
+    files['source/module.json'] = json.dumps(module, indent=2) + '\n'
     files['readme.md'] = readme
     if target == 'psp':
         files['data/' + tokens['PLUGIN_SUBDIR'] + '/plugin.ini'] = '[options]\ntype = prx\nfilename = {{PROJECT_NAME}}.prx\nversion = 1\nmemory = 93\n\n[games]\n' + ''.join(value + ' = true\n' for value in re.split(r'[,\s]+', cfg['disc_ids'].strip()))

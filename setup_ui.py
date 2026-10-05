@@ -187,7 +187,7 @@ button{border:1px solid var(--line);background:#ffffff07;color:var(--text);borde
     </div>
     <div id="pcsx2-fields" class="fields" style="margin-top:18px" hidden>
      <label><span class="field-label">Game CRCs</span><input id="crcs" placeholder="4F32A11F, 7EA439F5" spellcheck="false"><span class="hint">Eight hexadecimal digits per CRC, separated by commas.</span></label>
-     <label><span class="field-label">Load address</span><input id="base" value="0x02100000" spellcheck="false"><span class="hint">Reserve this address in extended memory; avoid overlapping plugins.</span></label>
+     <p class="hint">PS2 modules receive a dynamic base, private stack and heap from Plugin Injector. No load address is required.</p>
     </div>
    </div>
   </div>
@@ -225,7 +225,7 @@ button{border:1px solid var(--line);background:#ffffff07;color:var(--text);borde
 const $=id=>document.getElementById(id),session=new URL(location.href).searchParams.get('session');
 let catalog,target='windows',architecture='x64',language='C',repoAuto=true,modules=[],busy=false,reviewValues;
 const localValues={},extensions={windows:'.asi',psp:'.prx',pcsx2:'.elf'},names={windows:'Windows',psp:'PSP',pcsx2:'PCSX2F'};
-const textFields=['project_name','repo_url','game_module','disc_ids','crcs','base','plugin_sdk_game','premake_version','license','branch','game_path','game_exe','script_subdir','steam_app_id','extra_paths'];
+const textFields=['project_name','repo_url','game_module','disc_ids','crcs','plugin_sdk_game','premake_version','license','branch','game_path','game_exe','script_subdir','steam_app_id','extra_paths'];
 const checks=['run_git_sm','run_commit','enable_signing','has_embpdb'];
 async function api(path,body){const response=await fetch('/api/'+path,{method:body===undefined?'GET':'POST',headers:{'X-Setup-Session':session,'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)});const result=await response.json();if(!response.ok)throw new Error(result.error||'Request failed');return result}
 function error(message){$('error').textContent=message;$('error').hidden=!message;if(message)$('error').scrollIntoView({behavior:'smooth',block:'center'})}

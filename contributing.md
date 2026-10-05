@@ -29,13 +29,13 @@ Suggested filename format:
 ## PSP / PCSX2F setup
 
 Run `python setup.py` and choose **PSP · .prx** or **PCSX2F · .elf** at the top, then choose C
-or C++. Supply the PSP internal game module and disc IDs, or PS2 game CRCs and
-load address. The local game path is the emulator directory, stored in `.env`
+or C++. Supply the PSP internal game module and disc IDs, or PS2 game CRCs.
+PS2 bases are assigned at load time. The local game path is the emulator directory, stored in `.env`
 as `PPSSPP_DIR` or `PCSX2F_DIR`.
 
 Setup downloads only the selected platform's injection, pattern, INI and logging
-helpers from a pinned WidescreenFixesPack GitHub revision. The PS2 linker script
-comes from the initialized SDK submodule, retaining its license notice.
+helpers from a pinned WidescreenFixesPack GitHub revision. PS2 projects use the
+updated SDK's `plugins/build-module.ps1` and shared module runtime; the SDK license is retained.
 It preserves their licenses. No `template-assets` directory is needed. Internet
 access and Git are required: setup always adds and initializes `external/pspsdk`
 or `external/ps2sdk` as a real submodule, even if the Windows submodule checkbox
@@ -44,15 +44,16 @@ Generated CI checks out submodules recursively and invokes the same SDK build
 through Visual Studio. It excludes Windows plugin-sdk and ASI Loader steps.
 
 The generated `build-plugin.ps1` builds directly on Windows; `premake5.bat` creates
-a Visual Studio Makefile project. Keep the checkout path free of spaces because
-the SDK makefiles use unquoted paths. PSP packages use the portable PPSSPP
+a Visual Studio Makefile project. PSP still requires a checkout path without
+spaces because its SDK makefiles use unquoted paths. The PS2 builder supports
+spaces and gives each output its own intermediate directory. PSP packages use the portable PPSSPP
 `memstick/PSP/PLUGINS/<project>/` layout; PS2 packages use `PLUGINS/` and require
 PCSX2F or a compatible PCSX2 Plugin Injector. Verify game IDs, CRCs, scan bounds
-and the reserved load address before adding patches.
+before adding patches. PS2 modules receive their base address dynamically.
 
 C helpers retain C linkage in C++ projects. PSP C++ uses SDK CRT startup for the
-heap and global constructors. PS2 enters `init` directly; add explicit heap and
-constructor initialization before heap-based STL or nontrivial global objects.
+heap and global constructors. PS2 uses the SDK guest module runtime, which
+initializes its private heap and global constructors before calling `init`.
 The starter disables exceptions and RTTI. Both languages produce guest MIPS
 plugins, not host emulator graphics/input plugins.
 

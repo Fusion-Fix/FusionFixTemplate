@@ -228,7 +228,7 @@ def configuration(values: dict) -> dict:
                           ("has_embpdb", True)]:
         cfg[name] = bool(values.get(name, default))
     return setup_emulators.configure(cfg, target, language, value("game_module"),
-                                     value("disc_ids"), value("crcs"), value("base", "0x02100000"))
+                                     value("disc_ids"), value("crcs"), "")
 
 
 def validate_configuration(cfg: dict) -> list[str]:
