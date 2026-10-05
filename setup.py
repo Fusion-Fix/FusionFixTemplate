@@ -284,10 +284,8 @@ def apply_configuration(cfg: dict, emit):
     """Apply a validated configuration. Runs on the local server worker thread."""
     tokens = cfg["tokens"]
     license_content = _license_content(tokens["LICENSE_SPDX"], emit, tokens["PROJECT_NAME"] + " contributors")
-    downloads = None
     if cfg["target"] != "windows":
-        downloads = setup_emulators.fetch(cfg["target"], emit)
-        setup_emulators.initialize_sdk(SCRIPT_DIR, cfg, run_git, emit)
+        setup_emulators.initialize_submodules(SCRIPT_DIR, cfg, run_git, emit)
     elif cfg["run_git_sm"]:
         _initialize_submodules(SCRIPT_DIR, cfg["submodules"], emit)
     # 1. Substitute template tokens.
@@ -309,7 +307,7 @@ def apply_configuration(cfg: dict, emit):
         _inject_premake_submodules(SCRIPT_DIR / "premake5.lua", cfg["submodules"],
                                   cfg.get("plugin_sdk_game", ""), emit)
     else:
-        setup_emulators.generate(SCRIPT_DIR, cfg, downloads)
+        setup_emulators.generate(SCRIPT_DIR, cfg)
     _configure_ci_submodules(SCRIPT_DIR / ".github/workflows/msvc.yml",
                          cfg["submodules"], cfg.get("plugin_sdk_game", ""), emit)
 

@@ -1,12 +1,7 @@
-"""Emulator setup: generated build files and GitHub helper downloads."""
+"""Emulator setup: generated build files using SDK and injector submodules."""
 import re
-from urllib.request import urlopen
-
-REVISION = "dd22c3ad31c1f796f7bbc1e1dc06b2d88e5336f5"
-BASE_URL = "https://raw.githubusercontent.com/ThirteenAG/WidescreenFixesPack/" + REVISION + "/"
-
 TEMPLATES = {
-    'emulator/build-plugin.ps1': r"""param([switch]$Clean)
+    'emulator/build-plugin.ps1': r"""param([ValidateSet('Debug', 'Release')][string]$Configuration = 'Release', [switch]$Clean)
 $ErrorActionPreference = 'Stop'
 $root = $PSScriptRoot
 $wrapper = Join-Path $root '{{SDK_WRAPPER}}'
@@ -16,6 +11,7 @@ if (-not (Test-Path -LiteralPath $wrapper)) {
 $outputDir = Join-Path $root 'data/{{PLUGIN_SUBDIR}}'
 New-Item -ItemType Directory -Force -Path $outputDir | Out-Null
 $makeArgs = @('-Project', (Join-Path $root 'source/module.json'))
+if ('{{HELPER_PLATFORM}}' -eq 'psp') { $makeArgs += @('-Configuration', $Configuration) }
 if ($Clean) { $makeArgs += '-Clean' }
 & powershell -NoProfile -ExecutionPolicy Bypass -File $wrapper @makeArgs
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -52,8 +48,9 @@ project "{{PROJECT_NAME}}"
    targetdir "data/{{PLUGIN_SUBDIR}}"
    targetextension "{{TARGET_EXTENSION}}"
    files { "source/**.c", "source/**.cpp", "source/**.h", "source/**.hpp", "source/makefile", "source/module.json", "source/exports.exp", "data/**.ini" }
-   includedirs { "source/includes" }
-   local command = 'powershell -NoProfile -ExecutionPolicy Bypass -File "' .. path.getabsolute("build-plugin.ps1") .. '"'
+   includedirs { "source/includes", "external/injector/include" }
+   files { "external/injector/include/{{HELPER_PLATFORM}}/**.h", "external/injector/include/{{HELPER_PLATFORM}}/**.hpp" }
+   local command = 'powershell -NoProfile -ExecutionPolicy Bypass -File "' .. path.getabsolute("build-plugin.ps1") .. '" -Configuration "%{cfg.buildcfg}"'
    buildcommands { command }
    rebuildcommands { command .. ' -Clean', 'if errorlevel 1 exit /b %errorlevel%', command }
    cleancommands { command .. ' -Clean' }
@@ -82,8 +79,11 @@ and keep intermediate files separate. Update the manifest when adding source fil
 
 Alternatively, run `premake5.bat` and open `build/{{PROJECT_NAME}}.{{SOLUTION_EXTENSION}}`.
 Visual Studio invokes the same SDK build. Its Win32 platform is the build host,
-not the architecture of the plugin. Release and Debug currently use the same SDK flags
-and output. Use `build-plugin.ps1 -Clean` before changing flags.
+not the architecture of the plugin. For PSP, Debug enables the starter's hook diagnostics and adds debug symbols while retaining
+the optimized guest code; Release omits the starter hook diagnostics.
+The shared logger remains available in both configurations. Select Debug with
+`build-plugin.ps1 -Configuration Debug` or the Visual Studio configuration.
+PS2 configurations retain their existing SDK flags. Both use the same output path.
 
 Run `release.bat` to package `data/` and the helper licenses. CI builds and packages
 the same output without requiring an emulator or a local `.env`.
@@ -117,9 +117,11 @@ Builds preserve the installed INI and only replace an existing plugin binary.
 
 ## Shared helpers
 
-MIPS injection, patterns, INI parsing and logging helpers are vendored from
-ThirteenAG/WidescreenFixesPack; see `licenses/WidescreenFixesPack.txt` and the licenses
-embedded in `rini` and `nanoprintf`. Keep these notices when redistributing.
+MIPS injection, patterns, INI parsing and logging helpers come from the
+`external/injector` submodule. C APIs and standalone C++ hook/patch handles are
+available under `include/{{HELPER_PLATFORM}}`; see its `hooks.md` for memory,
+cache and register contracts. Keep `licenses/EmulatorHelpers.txt` and the embedded
+`rini`/`nanoprintf` notices when redistributing. Update the submodule to update helpers.
 Record signatures, game builds and patch evidence in `docs/research/`.
 
 ## License
@@ -203,11 +205,12 @@ int module_start(SceSize args, void* argp)
 }
 #endif
 """,
-    'psp/source/makefile': r""".PHONY: all clean
+    'psp/source/makefile': r"""CONFIGURATION ?= Release
+.PHONY: all clean
 all:
-	powershell -NoProfile -ExecutionPolicy Bypass -File "../external/pspsdk/plugins/build-module.ps1" -Project module.json
+	powershell -NoProfile -ExecutionPolicy Bypass -File "../external/pspsdk/plugins/build-module.ps1" -Project module.json -Configuration "$(CONFIGURATION)"
 clean:
-	powershell -NoProfile -ExecutionPolicy Bypass -File "../external/pspsdk/plugins/build-module.ps1" -Project module.json -Clean
+	powershell -NoProfile -ExecutionPolicy Bypass -File "../external/pspsdk/plugins/build-module.ps1" -Project module.json -Configuration "$(CONFIGURATION)" -Clean
 """,
     'psp/source/exports.exp': r"""PSP_BEGIN_EXPORTS
 PSP_EXPORT_START(syslib, 0, 0x8000)
@@ -221,12 +224,16 @@ PSP_END_EXPORTS
 #ifdef __cplusplus
 extern "C" {
 #endif
-#include "injector.h"
-#include "patterns.h"
-#include "inireader.h"
-#include "log.h"
+#include <psp/injector.h>
+#include <psp/patterns.h>
+#include <psp/inireader.h>
+#include <psp/log.h>
 #ifdef __cplusplus
 }
+#endif
+#ifdef __cplusplus
+#include <psp/hooks.hpp>
+#include <psp/patches.hpp>
 #endif
 """,
     'pcsx2/source/main.c': r"""#include <stdint.h>
@@ -269,14 +276,45 @@ clean:
 #ifdef __cplusplus
 extern "C" {
 #endif
-#include "pcsx2f_api.h"
-#include "patterns.h"
-#include "injector.h"
-#include "inireader.h"
-#include "log.h"
+#include <ps2/pcsx2f_api.h>
+#include <ps2/patterns.h>
+#include <ps2/injector.h>
+#include <ps2/inireader.h>
+#include <ps2/log.h>
 #ifdef __cplusplus
 }
 #endif
+#ifdef __cplusplus
+#include <ps2/hooks.hpp>
+#include <ps2/patches.hpp>
+#endif
+""",
+}
+
+
+CPP_TEMPLATES = {
+    'psp/source/includes/plugin_api.h': r"""#pragma once
+#include <psp/injector.hpp>
+#include <psp/hooks_guest.h>
+#include <psp/memalloc.h>
+extern "C" {
+#include <psp/patterns.h>
+#include <psp/inireader.h>
+#include <psp/log.h>
+}
+""",
+    'pcsx2/source/includes/plugin_api.h': r"""#pragma once
+#include <stdlib.h>
+#include <ps2/injector.hpp>
+#include <ps2/hooks_guest.h>
+extern "C" {
+#include "guest_module.h"
+#include <ps2/pcsx2f_api.h>
+#include <ps2/patterns.h>
+#include <ps2/inireader.h>
+#include <ps2/log.h>
+extern const PCSX2FModuleContext* PCSX2FContext;
+}
 """,
 }
 
@@ -289,12 +327,13 @@ def configure(cfg, target, language, game_module, disc_ids, crcs, base):
     psp = target == 'psp'
     sdk = 'pspsdk' if psp else 'ps2sdk'
     cfg.update(submodules=[dict(name=sdk, path='external/' + sdk,
-               url='https://github.com/ThirteenAG/' + sdk)], run_git_sm=True,
+               url='https://github.com/ThirteenAG/' + sdk),
+               dict(name='injector', path='external/injector', url='https://github.com/ThirteenAG/injector')], run_git_sm=True,
                enable_signing=False, has_embpdb=False, steam_app_id='')
     name = cfg['tokens']['PROJECT_NAME']
     cfg['tokens'].update(MSBUILD_PLATFORM='Win32', OUTPUT_KIND='Makefile',
         TARGET_EXTENSION='.prx' if psp else '.elf', PLUGIN_LANGUAGE=language,
-        TARGET_PROFILE='PPSSPP' if psp else 'PCSX2F',
+        TARGET_PROFILE='PPSSPP' if psp else 'PCSX2F', HELPER_PLATFORM='psp' if psp else 'ps2',
         PLUGIN_SUBDIR='memstick/PSP/PLUGINS/' + name if psp else 'PLUGINS',
         EMULATOR_ENV_KEY='PPSSPP_DIR' if psp else 'PCSX2F_DIR',
         EMULATOR_EXE=cfg['game_exe'] or ('PPSSPPWindows64.exe' if psp else 'pcsx2-qtx64.exe'),
@@ -320,51 +359,30 @@ def validate(cfg):
     return errors
 
 
-def manifest(target):
-    files = {'licenses/WidescreenFixesPack.txt': 'license'}
-    for name in ['injector', 'patterns', 'inireader', 'log', 'memalloc', 'mips', 'rini']:
-        for ext in ['c', 'h']:
-            files['source/includes/' + name + '.' + ext] = 'includes/' + target + '/' + name + '.' + ext
-    files['source/includes/nanoprintf.h'] = 'includes/' + target + '/nanoprintf.h'
-    if target == 'pcsx2':
-        files['source/includes/pcsx2f_api.h'] = 'includes/pcsx2/pcsx2f_api.h'
-    return files
-
-
-def fetch(target, emit=print):
-    """Fetch everything before changing project files; failure leaves the template intact."""
-    result = {}
-    for dest, source in manifest(target).items():
-        emit('Downloading ' + source)
-        with urlopen(BASE_URL + source, timeout=30) as response:
-            data = response.read(2 * 1024 * 1024 + 1)
-        if not data or len(data) > 2 * 1024 * 1024:
-            raise ValueError('Invalid download size: ' + source)
-        result[dest] = data.decode('utf-8-sig')
-    return result
-
-
-def initialize_sdk(root, cfg, run_git, emit):
-    sm = cfg['submodules'][0]
-    ok, out = run_git(['ls-files', '--stage', '--', sm['path']], root)
-    if not ok:
-        raise RuntimeError(out)
-    if not out.startswith('160000 '):
-        ok, out = run_git(['submodule', 'add', '--', sm['url'], sm['path']], root)
+def initialize_submodules(root, cfg, run_git, emit):
+    for sm in cfg['submodules']:
+        ok, out = run_git(['ls-files', '--stage', '--', sm['path']], root)
         if not ok:
-            raise RuntimeError('SDK submodule registration failed: ' + out)
-    ok, out = run_git(['submodule', 'update', '--init', '--recursive', '--', sm['path']], root)
-    if not ok:
-        raise RuntimeError('SDK initialization failed: ' + out)
+            raise RuntimeError(out)
+        if not out.startswith('160000 '):
+            ok, out = run_git(['submodule', 'add', '--', sm['url'], sm['path']], root)
+            if not ok:
+                raise RuntimeError('Submodule registration failed: ' + out)
+        ok, out = run_git(['submodule', 'update', '--init', '--recursive', '--', sm['path']], root)
+        if not ok:
+            raise RuntimeError('Submodule initialization failed: ' + out)
+        emit('Submodule initialized: ' + sm['path'])
     if not (root / cfg['tokens']['SDK_WRAPPER']).is_file():
         raise RuntimeError('SDK submodule is missing its build wrapper.')
-    emit('SDK submodule registered and initialized: ' + sm['path'])
+    if not (root / 'external/injector/include' / ('psp' if cfg['target'] == 'psp' else 'ps2') / 'hooks.h').is_file():
+        raise RuntimeError('Injector submodule lacks emulator helpers; update it to a compatible revision.')
 
 
-def generate(root, cfg, downloads):
+def generate(root, cfg):
     tokens = cfg['tokens']
     target = cfg['target']
-    files = dict(downloads)
+    helper_platform = 'psp' if target == 'psp' else 'ps2'
+    files = {'licenses/EmulatorHelpers.txt': (root / 'external/injector/include' / helper_platform / 'LICENSE').read_text(encoding='utf-8')}
     if target == 'pcsx2':
         files['licenses/PS2SDK.txt'] = (root / 'external/ps2sdk/ps2sdk/LICENSE').read_text(encoding='utf-8')
     for key, text in TEMPLATES.items():
@@ -373,17 +391,35 @@ def generate(root, cfg, downloads):
             continue
         if rel == 'source/main.c' and cfg['language'] == 'C++':
             rel = 'source/main.cpp'
+        if cfg['language'] == 'C++' and key in CPP_TEMPLATES:
+            text = CPP_TEMPLATES[key]
+        if cfg['language'] == 'C++' and rel == 'source/main.cpp':
+            if target == 'psp':
+                text = text.replace('static void Init(void)', 'static psp_hook_guest hookGuest{};\n\nstatic int Init(void)')
+                text = text.replace('    // Add game-version-checked MIPS patches here; validate every pattern match.\n    // Flush caches after writing instructions.\n    sceKernelDcacheWritebackAll();\n    sceKernelIcacheClearAll();', '    psp_hook_backend backend{};\n    if (psp_hook_guest_backend(&backend, &hookGuest, psp_mem_storage_begin(), psp_mem_storage_size(),\n                               AllocMemBlock, FreeMemBlock) != PSP_HOOK_OK) return -1;\n    if (injector::Initialize(backend, [](psp_hook_status status) {\n#if (defined(DEBUG) || defined(_DEBUG)) && !defined(NDEBUG)\n        logger.WriteF("Hook installation failed: %u", (unsigned)status);\n#else\n        (void)status;\n#endif\n    }) != PSP_HOOK_OK) return -1;\n    // Resolve supported game patterns, then use injector::MakeCALL/WriteMemory\n    // or safetymips::create_inline/create_mid with SafetyMipsContext& callbacks.\n    // Keep owning SafetyMips handles alive after Init returns.\n    return injector::FlushCaches() == PSP_HOOK_OK ? 0 : -1;')
+                text = text.replace('            injector.SetGameBaseAddress(info.text_addr, info.text_size);\n', '')
+                text = text.replace('        } else if (strcmp(info.name, MODULE_NAME) == 0) {\n            injector.SetModuleBaseAddress(info.text_addr, info.text_size);', '')
+                text = text.replace('    if (found) Init();', '    if (found) return Init();')
+            else:
+                text = text.replace('void init(void)', 'void init(void)')
+                text = text.replace("    // Identify the supported executable and configure pattern scan bounds before\n    // installing game-specific MIPS patches. Do not reuse another game's addresses.", '    static pcsx2_hook_guest hookGuest{};\n    pcsx2_hook_backend backend{};\n    if (pcsx2_hook_guest_backend(&backend, &hookGuest, PCSX2FContext, malloc, free) != PCSX2_HOOK_OK) return;\n    if (injector::Initialize(backend, [](pcsx2_hook_status status) {\n        logger.WriteF("Hook installation failed: %u", (unsigned)status);\n    }) != PCSX2_HOOK_OK) return;\n    // Resolve supported game patterns, then use injector::MakeCALL/WriteMemory\n    // or safetymips::create_inline/create_mid with SafetyMipsContext& callbacks.\n    // Keep owning SafetyMips handles alive after init returns.\n    injector::FlushCaches();')
         files[rel] = text
     readme = files['readme.md'].replace('source/main.c', 'source/main.cpp' if cfg['language'] == 'C++' else 'source/main.c')
-    readme += '\nHelpers downloaded by setup from WidescreenFixesPack revision `' + REVISION + '`.\n'
     import json
     sources = sorted(rel.removeprefix('source/') for rel in files if rel.startswith('source/') and rel.endswith(('.c', '.cpp')))
-    module = dict(sources=sources, output='../data/' + tokens['PLUGIN_SUBDIR'] + '/' + tokens['PROJECT_NAME'] + tokens['TARGET_EXTENSION'])
+    helpers = ['patterns', 'inireader', 'log', 'memalloc', 'rini']
+    if cfg['language'] != 'C++':
+        helpers = ['injector', 'patterns', 'inireader', 'log', 'memalloc', 'mips', 'rini']
+    sources += ['../external/injector/include/' + helper_platform + '/' + name + '.c' for name in helpers]
+    module = dict(sources=sources, includes=['../external/injector/include'], output='../data/' + tokens['PLUGIN_SUBDIR'] + '/' + tokens['PROJECT_NAME'] + tokens['TARGET_EXTENSION'])
     if target == 'psp':
         module.update(exports='exports.exp', startup='crt' if cfg['language'] == 'C++' else 'module_start',
+                      defines=['PSP_HOOK_RAM_END=0x0DD00000'],
                       libraries=['-lpspsystemctrl_user', '-lm'],
                       c_flags=['-O2', '-Os', '-G0', '-Wall', '-fno-strict-aliasing', '-fshort-wchar', '-fno-pic', '-mno-check-zero-division', '-mpreferred-stack-boundary=4', '-fpack-struct=16'],
                       cxx_flags=['-std=gnu++17', '-fno-exceptions', '-fno-rtti'])
+    if target == 'psp' and cfg['language'] == 'C++':
+        module['defines'].append('MEM_CUSTOM_TOTAL_SIZE=16384')
     files['source/module.json'] = json.dumps(module, indent=2) + '\n'
     files['readme.md'] = readme
     if target == 'psp':
