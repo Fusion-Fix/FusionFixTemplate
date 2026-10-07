@@ -295,6 +295,7 @@ extern "C" {
 CPP_TEMPLATES = {
     'psp/source/includes/plugin_api.h': r"""#pragma once
 #include <psp/injector.hpp>
+#include <psp/safetymips.hpp>
 #include <psp/hooks_guest.h>
 #include <psp/memalloc.h>
 extern "C" {
@@ -306,6 +307,8 @@ extern "C" {
     'pcsx2/source/includes/plugin_api.h': r"""#pragma once
 #include <stdlib.h>
 #include <ps2/injector.hpp>
+#include <ps2/safetymips.hpp>
+#include <ps2/game_abi.hpp>
 #include <ps2/hooks_guest.h>
 extern "C" {
 #include "guest_module.h"
@@ -395,6 +398,14 @@ def generate(root, cfg):
             text = CPP_TEMPLATES[key]
         if cfg['language'] == 'C++' and rel == 'source/main.cpp':
             if target == 'psp':
+                text = text.replace('PSP_HEAP_SIZE_KB(256);', '// Hook storage is embedded in this PRX; no system heap is requested.')
+                start = text.index('#ifdef __cplusplus\n// The SDK CRT')
+                text = text[:start] + '''extern "C" int module_start(SceSize args, void* argp)
+{
+    (void)args; (void)argp;
+    return StartPlugin();
+}
+'''
                 text = text.replace('static void Init(void)', 'static psp_hook_guest hookGuest{};\n\nstatic int Init(void)')
                 text = text.replace('    // Add game-version-checked MIPS patches here; validate every pattern match.\n    // Flush caches after writing instructions.\n    sceKernelDcacheWritebackAll();\n    sceKernelIcacheClearAll();', '    psp_hook_backend backend{};\n    if (psp_hook_guest_backend(&backend, &hookGuest, psp_mem_storage_begin(), psp_mem_storage_size(),\n                               AllocMemBlock, FreeMemBlock) != PSP_HOOK_OK) return -1;\n    if (injector::Initialize(backend, [](psp_hook_status status) {\n#if (defined(DEBUG) || defined(_DEBUG)) && !defined(NDEBUG)\n        logger.WriteF("Hook installation failed: %u", (unsigned)status);\n#else\n        (void)status;\n#endif\n    }) != PSP_HOOK_OK) return -1;\n    // Resolve supported game patterns, then use injector::MakeCALL/WriteMemory\n    // or safetymips::create_inline/create_mid with SafetyMipsContext& callbacks.\n    // Keep owning SafetyMips handles alive after Init returns.\n    return injector::FlushCaches() == PSP_HOOK_OK ? 0 : -1;')
                 text = text.replace('            injector.SetGameBaseAddress(info.text_addr, info.text_size);\n', '')
@@ -405,6 +416,18 @@ def generate(root, cfg):
                 text = text.replace("    // Identify the supported executable and configure pattern scan bounds before\n    // installing game-specific MIPS patches. Do not reuse another game's addresses.", '    static pcsx2_hook_guest hookGuest{};\n    pcsx2_hook_backend backend{};\n    if (pcsx2_hook_guest_backend(&backend, &hookGuest, PCSX2FContext, malloc, free) != PCSX2_HOOK_OK) return;\n    if (injector::Initialize(backend, [](pcsx2_hook_status status) {\n        logger.WriteF("Hook installation failed: %u", (unsigned)status);\n    }) != PCSX2_HOOK_OK) return;\n    // Resolve supported game patterns, then use injector::MakeCALL/WriteMemory\n    // or safetymips::create_inline/create_mid with SafetyMipsContext& callbacks.\n    // Keep owning SafetyMips handles alive after init returns.\n    injector::FlushCaches();')
         files[rel] = text
     readme = files['readme.md'].replace('source/main.c', 'source/main.cpp' if cfg['language'] == 'C++' else 'source/main.c')
+    if target == 'psp' and cfg['language'] == 'C++':
+        readme = readme.replace('For PSP, enable plugins in PPSSPP.',
+            'The minimal PSP C++ runtime runs constructors before `module_start` and\n'
+            'keeps destructor registrations bounded inside the PRX. Hook storage is\n'
+            'embedded; this starter requests no system heap.\n\nFor PSP, enable plugins in PPSSPP.')
+    if target == 'pcsx2' and cfg['language'] == 'C++':
+        readme = readme.replace('Record signatures, game builds and patch evidence in `docs/research/`.',
+            'Native PS2 games may use the SGI argument/register ABI. Use\n'
+            '`injector::GameFunction`, `injector::GameCallback` and\n'
+            '`safetymips::create_inline_game` for those boundaries; ordinary SDK calls\n'
+            'use the standard frontends. See `ps2/game_abi.hpp`.\n'
+            'Record signatures, game builds and patch evidence in `docs/research/`.')
     import json
     sources = sorted(rel.removeprefix('source/') for rel in files if rel.startswith('source/') and rel.endswith(('.c', '.cpp')))
     helpers = ['patterns', 'inireader', 'log', 'memalloc', 'rini']
@@ -413,13 +436,16 @@ def generate(root, cfg):
     sources += ['../external/injector/include/' + helper_platform + '/' + name + '.c' for name in helpers]
     module = dict(sources=sources, includes=['../external/injector/include'], output='../data/' + tokens['PLUGIN_SUBDIR'] + '/' + tokens['PROJECT_NAME'] + tokens['TARGET_EXTENSION'])
     if target == 'psp':
-        module.update(exports='exports.exp', startup='crt' if cfg['language'] == 'C++' else 'module_start',
-                      defines=['PSP_HOOK_RAM_END=0x0DD00000'],
+        module.update(exports='exports.exp', startup='module_start',
+                      defines=['PSP_HOOK_RAM_END=0x0DD00000', 'PSP_GAME_ABI_COMPAT'],
                       libraries=['-lpspsystemctrl_user', '-lm'],
                       c_flags=['-O2', '-Os', '-G0', '-Wall', '-fno-strict-aliasing', '-fshort-wchar', '-fno-pic', '-mno-check-zero-division', '-mpreferred-stack-boundary=4', '-fpack-struct=16'],
                       cxx_flags=['-std=gnu++17', '-fno-exceptions', '-fno-rtti'])
     if target == 'psp' and cfg['language'] == 'C++':
         module['defines'].append('MEM_CUSTOM_TOTAL_SIZE=16384')
+    if target == 'pcsx2':
+        # Mid-hook callbacks must not introduce EE scalar-ACC operations.
+        module.update(c_flags=['-ffp-contract=off'], cxx_flags=['-ffp-contract=off'])
     files['source/module.json'] = json.dumps(module, indent=2) + '\n'
     files['readme.md'] = readme
     if target == 'psp':
