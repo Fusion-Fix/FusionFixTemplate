@@ -35,9 +35,18 @@ if (Test-Path -LiteralPath $envFile) {
 """,
     'emulator/premake5.lua': r"""newoption { trigger = "with-version", value = "STRING", description = "Release version" }
 
+require "vstudio"
+
+-- {{MSBUILD_PLATFORM}} as a Visual Studio platform of its own (as premake-consoles does for
+-- consoles); the project is a Makefile one, so no MSBuild platform files are needed.
+premake.vstudio.vs2010_architectures.{{HELPER_PLATFORM}} = "{{MSBUILD_PLATFORM}}"
+premake.api.addAllowed("system", "{{HELPER_PLATFORM}}")
+
 workspace "{{PROJECT_NAME}}"
    configurations { "Release", "Debug" }
-   platforms { "Win32" } -- Visual Studio makefile host; the SDK compiles MIPS code.
+   platforms { "{{MSBUILD_PLATFORM}}" }
+   system "{{HELPER_PLATFORM}}"
+   bindirs { "$(PATH)" } -- unknown VS platform: keep the system PATH for the build commands
    location "build"
    startproject "{{PROJECT_NAME}}"
 
@@ -78,8 +87,7 @@ Both SDK module builders read `source/module.json`, support paths containing spa
 and keep intermediate files separate. Update the manifest when adding source files.
 
 Alternatively, run `premake5.bat` and open `build/{{PROJECT_NAME}}.{{SOLUTION_EXTENSION}}`.
-Visual Studio invokes the same SDK build. Its Win32 platform is the build host,
-not the architecture of the plugin. For PSP, Debug enables the starter's hook diagnostics and adds debug symbols while retaining
+Visual Studio invokes the same SDK build through its {{MSBUILD_PLATFORM}} platform. For PSP, Debug enables the starter's hook diagnostics and adds debug symbols while retaining
 the optimized guest code; Release omits the starter hook diagnostics.
 The shared logger remains available in both configurations. Select Debug with
 `build-plugin.ps1 -Configuration Debug` or the Visual Studio configuration.
@@ -334,7 +342,7 @@ def configure(cfg, target, language, game_module, disc_ids, crcs, base):
                dict(name='injector', path='external/injector', url='https://github.com/ThirteenAG/injector')], run_git_sm=True,
                enable_signing=False, has_embpdb=False, steam_app_id='')
     name = cfg['tokens']['PROJECT_NAME']
-    cfg['tokens'].update(MSBUILD_PLATFORM='Win32', OUTPUT_KIND='Makefile',
+    cfg['tokens'].update(MSBUILD_PLATFORM='PSP' if psp else 'PS2', OUTPUT_KIND='Makefile',
         TARGET_EXTENSION='.prx' if psp else '.elf', PLUGIN_LANGUAGE=language,
         TARGET_PROFILE='PPSSPP' if psp else 'PCSX2F', HELPER_PLATFORM='psp' if psp else 'ps2',
         PLUGIN_SUBDIR='memstick/PSP/PLUGINS/' + name if psp else 'PLUGINS',
